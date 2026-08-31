@@ -1,0 +1,5 @@
+method_id,runs,median_wall_seconds,median_search_seconds,median_selector_seconds,median_selector_fraction
+A1-only,30,7.176989350000001,7.176989350000001,0.0,0.0
+A2-only,30,10.992873149999994,10.992873149999994,0.0,0.0
+A3-only,30,7.302661650000005,7.302661650000005,0.0,0.0
+A4-only,30,8.093907,8.093907,0.0,0.0

@@ -1,0 +1,3 @@
+method_id,planned,started,unstarted,resolved,infrastructure_missing,feasible,feasible_rate,wilson_low,wilson_high,median_feasible_cost,iqr_feasible_cost
+Rule,30,30,0,30,0,30,1.0,0.8864866068260312,0.9999999999999999,42397.45330456016,19.604414931614883
+UCB1,30,30,0,30,0,30,1.0,0.8864866068260312,0.9999999999999999,42373.08709088745,9.715464680521109

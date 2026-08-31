@@ -1,0 +1,57 @@
+{
+  "action_counts": {
+    "A2": 25
+  },
+  "audit_nfe": 1,
+  "best_cost": 42383.85436254661,
+  "best_cv": 0.0,
+  "budget_checkpoints": {
+    "100": {
+      "best_cost": 42383.85436254661,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 300600
+    },
+    "25": {
+      "best_cost": 42677.856748692415,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 75000
+    },
+    "50": {
+      "best_cost": 42424.692712687516,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 150000
+    },
+    "75": {
+      "best_cost": 42400.696389477685,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 225000
+    }
+  },
+  "completed_at": "2026-08-21T15:27:35.209058+00:00",
+  "cv_d": 0.0,
+  "cv_e": 0.0,
+  "cv_r": 0.0,
+  "cv_soc": 0.0,
+  "experiment_id": "stage1_fixed_actions",
+  "feasible": true,
+  "first_feasible_nfe": 12600,
+  "group": "formal",
+  "llm_call_count": 0,
+  "method": "A2-only",
+  "method_id": "A2-only",
+  "outcome": "feasible",
+  "search_nfe": 300600,
+  "seed": 310016,
+  "selector_fallbacks": 0,
+  "selector_seconds": 0.0,
+  "started_at": "2026-08-21T15:27:24.032482+00:00",
+  "status": "complete",
+  "total_emissions": 44725.39760821818,
+  "validation_failures": [],
+  "variant": "default",
+  "wall_seconds": 11.170538500000006
+}

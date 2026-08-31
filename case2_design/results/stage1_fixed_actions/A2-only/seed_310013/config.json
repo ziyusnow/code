@@ -1,0 +1,42 @@
+{
+  "action_parameters": {
+    "a2_crossover_probability": 0.9,
+    "a2_differential_weight": 0.5,
+    "a2_target_fraction": 0.25,
+    "a3_sigma_0": 0.05,
+    "a3_sigma_min": 0.005,
+    "a3_target_fraction": 0.15,
+    "a4_beta_max": 0.8,
+    "a4_beta_min": 0.2,
+    "a4_target_fraction": 0.25
+  },
+  "experiment_id": "stage1_fixed_actions",
+  "group": "formal",
+  "llm_options": {},
+  "method": "A2-only",
+  "method_id": "A2-only",
+  "search_config": {
+    "alpha": 0.8,
+    "c3": -0.4,
+    "c_max": 1.5,
+    "c_min": 0.5,
+    "decision_interval": 20,
+    "distance": 240.0,
+    "feasibility_tolerance": 1e-10,
+    "hours": 24,
+    "max_iterations": 500,
+    "numerical_epsilon": 1e-12,
+    "omega_max": 0.9,
+    "omega_min": 0.4,
+    "penalty_lambda": 1000000.0,
+    "population_size": 600,
+    "speed_max": 11.0,
+    "velocity_clamp_qe": 0.2,
+    "velocity_clamp_qg": 0.2,
+    "velocity_clamp_v": 2.2,
+    "zeta": 0.8
+  },
+  "seed": 310013,
+  "selector_options": {},
+  "variant": "default"
+}

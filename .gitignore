@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+.codegraph/
+.omo/
+
+checkpoints/
+case3_online_rework_backup_20260831/

@@ -1,0 +1,59 @@
+{
+  "action_counts": {
+    "A1": 19,
+    "A3": 5,
+    "A4": 1
+  },
+  "audit_nfe": 1,
+  "best_cost": 42377.67205796174,
+  "best_cv": 0.0,
+  "budget_checkpoints": {
+    "100": {
+      "best_cost": 42377.67205796174,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 300600
+    },
+    "25": {
+      "best_cost": 42835.73287019557,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 75000
+    },
+    "50": {
+      "best_cost": 42488.66449654916,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 150000
+    },
+    "75": {
+      "best_cost": 42425.28762096797,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 225000
+    }
+  },
+  "completed_at": "2026-08-22T14:44:34.322331+00:00",
+  "cv_d": 0.0,
+  "cv_e": 0.0,
+  "cv_r": 0.0,
+  "cv_soc": 0.0,
+  "experiment_id": "adaptive_non_llm_formal",
+  "feasible": true,
+  "first_feasible_nfe": 9000,
+  "group": "formal",
+  "llm_call_count": 0,
+  "method": "Rule",
+  "method_id": "Rule",
+  "outcome": "feasible",
+  "search_nfe": 300600,
+  "seed": 310014,
+  "selector_fallbacks": 0,
+  "selector_seconds": 0.0,
+  "started_at": "2026-08-22T14:44:25.097112+00:00",
+  "status": "complete",
+  "total_emissions": 44716.612141822916,
+  "validation_failures": [],
+  "variant": "default",
+  "wall_seconds": 9.217317699999999
+}

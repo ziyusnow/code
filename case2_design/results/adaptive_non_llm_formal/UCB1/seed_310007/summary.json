@@ -1,0 +1,60 @@
+{
+  "action_counts": {
+    "A1": 7,
+    "A2": 6,
+    "A3": 6,
+    "A4": 6
+  },
+  "audit_nfe": 1,
+  "best_cost": 42369.28316096307,
+  "best_cv": 0.0,
+  "budget_checkpoints": {
+    "100": {
+      "best_cost": 42369.28316096307,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 300600
+    },
+    "25": {
+      "best_cost": 42829.94319047927,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 75000
+    },
+    "50": {
+      "best_cost": 42414.168355011105,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 150000
+    },
+    "75": {
+      "best_cost": 42372.952697824934,
+      "best_cv": 0.0,
+      "feasible": true,
+      "search_nfe": 225000
+    }
+  },
+  "completed_at": "2026-08-22T14:45:33.181150+00:00",
+  "cv_d": 0.0,
+  "cv_e": 0.0,
+  "cv_r": 0.0,
+  "cv_soc": 0.0,
+  "experiment_id": "adaptive_non_llm_formal",
+  "feasible": true,
+  "first_feasible_nfe": 8400,
+  "group": "formal",
+  "llm_call_count": 0,
+  "method": "UCB1",
+  "method_id": "UCB1",
+  "outcome": "feasible",
+  "search_nfe": 300600,
+  "seed": 310007,
+  "selector_fallbacks": 0,
+  "selector_seconds": 0.0,
+  "started_at": "2026-08-22T14:45:23.053462+00:00",
+  "status": "complete",
+  "total_emissions": 44714.42971557664,
+  "validation_failures": [],
+  "variant": "default",
+  "wall_seconds": 10.120588699999999
+}

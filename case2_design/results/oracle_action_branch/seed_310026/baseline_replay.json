@@ -1,0 +1,14 @@
+{
+  "best_cost": 42371.69494937634,
+  "best_cv": 0.0,
+  "checkpoint_labels": [
+    "20pct",
+    "40pct",
+    "60pct",
+    "80pct",
+    "90pct"
+  ],
+  "history_rows": 501,
+  "search_nfe": 300600,
+  "seed": 310026
+}

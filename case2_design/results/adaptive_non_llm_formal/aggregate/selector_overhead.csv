@@ -1,0 +1,3 @@
+method_id,runs,median_wall_seconds,median_search_seconds,median_selector_seconds,median_selector_fraction
+Rule,30,9.31950965,9.31950965,0.0,0.0
+UCB1,30,10.398056500000003,10.398056500000003,0.0,0.0

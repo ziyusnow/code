@@ -1,0 +1,2 @@
+method_id,planned,started,unstarted,resolved,infrastructure_missing,feasible,feasible_rate,wilson_low,wilson_high,median_feasible_cost,iqr_feasible_cost
+UniformRandom,30,30,0,30,0,30,1.0,0.8864866068260312,0.9999999999999999,42372.118112990756,10.104623748309677

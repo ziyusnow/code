@@ -1,0 +1,11 @@
+{
+  "action_repeats": "D:\\FileRecv\\personal\\paper\\ship-op\\code\\case2_design\\results\\oracle_action_branch\\action_repeats.csv",
+  "ambiguous_oracle_count": 22,
+  "branch_count": 300,
+  "checkpoint_count": 25,
+  "checkpoint_summary": "D:\\FileRecv\\personal\\paper\\ship-op\\code\\case2_design\\results\\oracle_action_branch\\checkpoint_summary.csv",
+  "clear_oracle_count": 3,
+  "manifest": "D:\\FileRecv\\personal\\paper\\ship-op\\code\\case2_design\\results\\oracle_action_branch\\manifest.json",
+  "oracle_vs_random_by_checkpoint": "D:\\FileRecv\\personal\\paper\\ship-op\\code\\case2_design\\results\\oracle_action_branch\\oracle_vs_random_by_checkpoint.csv",
+  "oracle_vs_random_report": "D:\\FileRecv\\personal\\paper\\ship-op\\code\\case2_design\\results\\oracle_action_branch\\oracle_vs_random_report.md"
+}

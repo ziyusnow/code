@@ -1,0 +1,329 @@
+{
+  "branch_iterations": 20,
+  "checkpoint_fractions": [
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    0.9
+  ],
+  "checkpoint_rounding": "first_search_nfe_at_or_above_target",
+  "expected_branch_count": 300,
+  "expected_checkpoint_count": 25,
+  "experiment": "oracle_action_branch",
+  "gurobi_reference_cost": 42356.70242823809,
+  "repeats_per_action": 3,
+  "rng_policy": "common_core_per_repeat_and_independent_action_streams",
+  "schema_version": 1,
+  "selected_seeds": [
+    310027,
+    310029,
+    310026,
+    310008,
+    310006
+  ],
+  "selected_uniform_summaries": [
+    {
+      "action_counts": {
+        "A1": 7,
+        "A2": 5,
+        "A3": 6,
+        "A4": 7
+      },
+      "audit_nfe": 1,
+      "best_cost": 42363.8747350297,
+      "best_cv": 0.0,
+      "budget_checkpoints": {
+        "100": {
+          "best_cost": 42363.8747350297,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 300600
+        },
+        "25": {
+          "best_cost": 42881.29019757938,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 75000
+        },
+        "50": {
+          "best_cost": 42403.5885216757,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 150000
+        },
+        "75": {
+          "best_cost": 42375.490791932716,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 225000
+        }
+      },
+      "completed_at": "2026-08-22T08:42:06.870285+00:00",
+      "cv_d": 0.0,
+      "cv_e": 0.0,
+      "cv_r": 0.0,
+      "cv_soc": 0.0,
+      "experiment_id": "uniform_random_formal",
+      "feasible": true,
+      "first_feasible_nfe": 15600,
+      "group": "formal",
+      "llm_call_count": 0,
+      "method": "UniformRandom",
+      "method_id": "UniformRandom",
+      "outcome": "feasible",
+      "search_nfe": 300600,
+      "seed": 310027,
+      "selector_fallbacks": 0,
+      "selector_seconds": 0.0,
+      "started_at": "2026-08-22T08:41:55.755815+00:00",
+      "status": "complete",
+      "total_emissions": 44692.77501027695,
+      "validation_failures": [],
+      "variant": "default",
+      "wall_seconds": 11.108655599999992
+    },
+    {
+      "action_counts": {
+        "A1": 9,
+        "A2": 4,
+        "A3": 6,
+        "A4": 6
+      },
+      "audit_nfe": 1,
+      "best_cost": 42369.333750360376,
+      "best_cv": 0.0,
+      "budget_checkpoints": {
+        "100": {
+          "best_cost": 42369.333750360376,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 300600
+        },
+        "25": {
+          "best_cost": 43162.937910101755,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 75000
+        },
+        "50": {
+          "best_cost": 42480.72739252604,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 150000
+        },
+        "75": {
+          "best_cost": 42386.25247157077,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 225000
+        }
+      },
+      "completed_at": "2026-08-22T08:42:17.402562+00:00",
+      "cv_d": 0.0,
+      "cv_e": 0.0,
+      "cv_r": 0.0,
+      "cv_soc": 0.0,
+      "experiment_id": "uniform_random_formal",
+      "feasible": true,
+      "first_feasible_nfe": 12600,
+      "group": "formal",
+      "llm_call_count": 0,
+      "method": "UniformRandom",
+      "method_id": "UniformRandom",
+      "outcome": "feasible",
+      "search_nfe": 300600,
+      "seed": 310029,
+      "selector_fallbacks": 0,
+      "selector_seconds": 0.0,
+      "started_at": "2026-08-22T08:42:06.515950+00:00",
+      "status": "complete",
+      "total_emissions": 44690.71517939257,
+      "validation_failures": [],
+      "variant": "default",
+      "wall_seconds": 10.878524900000002
+    },
+    {
+      "action_counts": {
+        "A1": 6,
+        "A2": 8,
+        "A3": 8,
+        "A4": 3
+      },
+      "audit_nfe": 1,
+      "best_cost": 42371.69494937634,
+      "best_cv": 0.0,
+      "budget_checkpoints": {
+        "100": {
+          "best_cost": 42371.69494937634,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 300600
+        },
+        "25": {
+          "best_cost": 42550.01476782307,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 75000
+        },
+        "50": {
+          "best_cost": 42416.756699970894,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 150000
+        },
+        "75": {
+          "best_cost": 42383.39307303673,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 225000
+        }
+      },
+      "completed_at": "2026-08-22T08:42:07.428383+00:00",
+      "cv_d": 0.0,
+      "cv_e": 0.0,
+      "cv_r": 0.0,
+      "cv_soc": 0.0,
+      "experiment_id": "uniform_random_formal",
+      "feasible": true,
+      "first_feasible_nfe": 10800,
+      "group": "formal",
+      "llm_call_count": 0,
+      "method": "UniformRandom",
+      "method_id": "UniformRandom",
+      "outcome": "feasible",
+      "search_nfe": 300600,
+      "seed": 310026,
+      "selector_fallbacks": 0,
+      "selector_seconds": 0.0,
+      "started_at": "2026-08-22T08:41:55.654236+00:00",
+      "status": "complete",
+      "total_emissions": 44704.308956616485,
+      "validation_failures": [],
+      "variant": "default",
+      "wall_seconds": 11.765270700000002
+    },
+    {
+      "action_counts": {
+        "A1": 9,
+        "A2": 6,
+        "A3": 4,
+        "A4": 6
+      },
+      "audit_nfe": 1,
+      "best_cost": 42379.71250331873,
+      "best_cv": 0.0,
+      "budget_checkpoints": {
+        "100": {
+          "best_cost": 42379.71250331873,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 300600
+        },
+        "25": {
+          "best_cost": 43398.40694028246,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 75000
+        },
+        "50": {
+          "best_cost": 42577.130522935695,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 150000
+        },
+        "75": {
+          "best_cost": 42406.518173508404,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 225000
+        }
+      },
+      "completed_at": "2026-08-22T08:41:09.165865+00:00",
+      "cv_d": 0.0,
+      "cv_e": 0.0,
+      "cv_r": 0.0,
+      "cv_soc": 0.0,
+      "experiment_id": "uniform_random_formal",
+      "feasible": true,
+      "first_feasible_nfe": 13800,
+      "group": "formal",
+      "llm_call_count": 0,
+      "method": "UniformRandom",
+      "method_id": "UniformRandom",
+      "outcome": "feasible",
+      "search_nfe": 300600,
+      "seed": 310008,
+      "selector_fallbacks": 0,
+      "selector_seconds": 0.0,
+      "started_at": "2026-08-22T08:40:57.176328+00:00",
+      "status": "complete",
+      "total_emissions": 44711.01304413616,
+      "validation_failures": [],
+      "variant": "default",
+      "wall_seconds": 11.980775400000002
+    },
+    {
+      "action_counts": {
+        "A1": 9,
+        "A2": 6,
+        "A3": 3,
+        "A4": 7
+      },
+      "audit_nfe": 1,
+      "best_cost": 42440.53574190971,
+      "best_cv": 0.0,
+      "budget_checkpoints": {
+        "100": {
+          "best_cost": 42440.53574190971,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 300600
+        },
+        "25": {
+          "best_cost": 44503.94378731304,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 75000
+        },
+        "50": {
+          "best_cost": 42904.368950973236,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 150000
+        },
+        "75": {
+          "best_cost": 42587.32558495978,
+          "best_cv": 0.0,
+          "feasible": true,
+          "search_nfe": 225000
+        }
+      },
+      "completed_at": "2026-08-22T08:41:08.598425+00:00",
+      "cv_d": 0.0,
+      "cv_e": 0.0,
+      "cv_r": 0.0,
+      "cv_soc": 0.0,
+      "experiment_id": "uniform_random_formal",
+      "feasible": true,
+      "first_feasible_nfe": 13800,
+      "group": "formal",
+      "llm_call_count": 0,
+      "method": "UniformRandom",
+      "method_id": "UniformRandom",
+      "outcome": "feasible",
+      "search_nfe": 300600,
+      "seed": 310006,
+      "selector_fallbacks": 0,
+      "selector_seconds": 0.0,
+      "started_at": "2026-08-22T08:40:56.440761+00:00",
+      "status": "complete",
+      "total_emissions": 44789.57434470906,
+      "validation_failures": [],
+      "variant": "default",
+      "wall_seconds": 12.1505933
+    }
+  ],
+  "selection_rule": "final_cost_sorted_nearest_ranks_1_8_15_23_30",
+  "uniform_experiment": "uniform_random_formal"
+}
