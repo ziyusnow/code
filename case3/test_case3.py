@@ -6,13 +6,17 @@ import numpy as np
 from case3.solve_case3 import (
     DISTANCE_NM,
     ESS_ENERGY_INITIAL,
+    ESS_POWER_MAX,
+    FAULT_DURATION,
     FAULT_G1_MAX,
+    G2_MAX,
     HOURS,
     RESERVE_HORIZON,
     configure_ess_capacity,
     configure_fault_g1_max,
     configure_g2_max,
     ess_energy_trajectory,
+    evaluate_fault,
     evaluate_normal,
     load_input_data,
     normal_validation,
@@ -60,7 +64,7 @@ class Case3ModelTests(unittest.TestCase):
             self.assertEqual(model.ESS_ENERGY_MIN, 3.0)
             self.assertEqual(float(ess_energy_trajectory(np.zeros(HOURS))[0]), 7.5)
         finally:
-            configure_ess_capacity(75.0)
+            configure_ess_capacity(15.0)
 
     def test_fault_g1_max_configuration(self):
         import case3.solve_case3 as model
@@ -70,7 +74,7 @@ class Case3ModelTests(unittest.TestCase):
             self.assertEqual(model.FAULT_G1_MAX, 2.0)
             self.assertEqual(model.FAULT_ALPHA, 0.2)
         finally:
-            configure_fault_g1_max(6.0)
+            configure_fault_g1_max(0.0)
 
     def test_g2_max_configuration(self):
         import case3.solve_case3 as model
@@ -108,7 +112,7 @@ class Case3ModelTests(unittest.TestCase):
         self.assertLess(float(np.max(np.abs(residual))), 1.0e-12)
 
     def test_small_ra_lshade_and_fault_stage_are_feasible(self):
-        _, result, _ = solve_ra_lshade(
+        _, result, history = solve_ra_lshade(
             self.p_vital,
             self.p_nonvital,
             self.p_pv,
@@ -121,9 +125,28 @@ class Case3ModelTests(unittest.TestCase):
         validation = normal_validation(result, "dynamic_reserve")
         self.assertLess(validation["distance_error"], 1.0e-8)
         self.assertLess(validation["balance_error"], 1.0e-8)
-        fault = solve_fault(result, self.p_vital, self.p_nonvital, self.p_pv)
+        fault = solve_fault(
+            result,
+            self.p_vital,
+            self.p_nonvital,
+            self.p_pv,
+            seed=17,
+            np_max=32,
+            np_min=4,
+            iterations=20,
+        )
         self.assertLess(float(np.max(np.abs(fault["balance_residual"]))), 1.0e-7)
         self.assertGreaterEqual(fault["minimum_inequality_slack"], -1.0e-7)
+        self.assertLessEqual(fault["cv_f"], 1.0e-8)
+        self.assertEqual(len(fault["convergence_history"]), 21)
+        self.assertEqual(fault["convergence_history"][-1]["epsilon"], 0.0)
+        self.assertIsNot(history, fault["convergence_history"])
+        self.assertLessEqual(float(np.max(np.abs(np.diff(fault["p_g1"])))), 2.0 + 1.0e-8)
+        self.assertLessEqual(float(np.max(np.abs(np.diff(fault["p_g2"])))), 3.0 + 1.0e-8)
+        self.assertLessEqual(
+            abs(float(fault["p_g2"][0] - result["p_g2"][4])),
+            3.0 + 1.0e-8,
+        )
 
     def test_fault_stage_accepts_explicit_start_and_duration(self):
         speeds = np.full(HOURS, 10.0)
@@ -144,10 +167,74 @@ class Case3ModelTests(unittest.TestCase):
             self.p_pv,
             fault_start_hour=20,
             fault_duration=4,
+            seed=19,
+            np_max=24,
+            np_min=4,
+            iterations=12,
         )
         np.testing.assert_array_equal(fault["hours"], np.arange(20, 24))
         self.assertEqual(fault["fault_start_hour"], 20)
         self.assertEqual(fault["fault_duration"], 4)
+
+    def test_fault_ra_lshade_is_deterministic_for_a_fixed_seed(self):
+        speeds = np.full(HOURS, 10.0)
+        demand = self.p_vital + self.p_nonvital + 0.0022 * speeds**3 - self.p_pv
+        position = np.r_[0.6 * demand, np.zeros(HOURS), speeds]
+        normal = evaluate_normal(
+            position,
+            self.p_vital,
+            self.p_nonvital,
+            self.p_pv,
+            "no_reserve",
+        )
+        normal = {key: value[0] for key, value in normal.items()}
+        kwargs = {
+            "fault_start_hour": 5,
+            "fault_duration": 4,
+            "seed": 23,
+            "np_max": 16,
+            "np_min": 4,
+            "iterations": 8,
+        }
+        first = solve_fault(
+            normal, self.p_vital, self.p_nonvital, self.p_pv, **kwargs
+        )
+        second = solve_fault(
+            normal, self.p_vital, self.p_nonvital, self.p_pv, **kwargs
+        )
+        for key in ("p_g1", "p_g2", "p_ess", "p_shed", "energy_ess"):
+            np.testing.assert_allclose(first[key], second[key], atol=0.0, rtol=0.0)
+        self.assertEqual(first["total_cost"], second["total_cost"])
+        self.assertEqual(first["cv_f"], second["cv_f"])
+        self.assertEqual(first["convergence_history"], second["convergence_history"])
+
+    def test_fault_evaluation_repairs_direct_variable_bounds(self):
+        speeds = np.full(HOURS, 10.0)
+        demand = self.p_vital + self.p_nonvital + 0.0022 * speeds**3 - self.p_pv
+        position = np.r_[0.6 * demand, np.zeros(HOURS), speeds]
+        normal = evaluate_normal(
+            position,
+            self.p_vital,
+            self.p_nonvital,
+            self.p_pv,
+            "no_reserve",
+        )
+        normal = {key: value[0] for key, value in normal.items()}
+        fault_position = np.r_[
+            np.full(FAULT_DURATION, G2_MAX + 1.0),
+            np.full(FAULT_DURATION, ESS_POWER_MAX + 1.0),
+            self.p_nonvital[5:9] + 1.0,
+        ]
+        fault = evaluate_fault(
+            fault_position,
+            normal,
+            self.p_vital,
+            self.p_nonvital,
+            self.p_pv,
+        )
+        np.testing.assert_array_equal(fault["p_g2"][0], G2_MAX)
+        np.testing.assert_array_equal(fault["p_ess"][0], ESS_POWER_MAX)
+        np.testing.assert_array_equal(fault["p_shed"][0], self.p_nonvital[5:9])
 
     def test_fault_interval_rejects_schedule_overrun(self):
         dummy = {

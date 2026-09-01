@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import minimize
 
 
 HOURS = 24
@@ -24,13 +23,13 @@ G2_RAMP = 3.0
 ESS_POWER_MIN = -3.0
 ESS_POWER_MAX = 3.0
 ESS_RAMP = 1.0
-ESS_ENERGY_INITIAL = 37.5
-ESS_ENERGY_MIN = 15.0
-ESS_ENERGY_MAX = 75.0
+ESS_ENERGY_INITIAL = 7.5
+ESS_ENERGY_MIN = 3.0
+ESS_ENERGY_MAX = 15.0
 ESS_EFFICIENCY_IN = 0.95
 ESS_EFFICIENCY_OUT = 0.95
 
-FAULT_ALPHA = 0.6
+FAULT_ALPHA = 0.0
 FAULT_G1_MAX = FAULT_ALPHA * G1_MAX
 RESERVE_HORIZON = 2
 FAULT_START_HOUR = 5
@@ -309,83 +308,111 @@ def _rank_indices(cost, cv, epsilon):
     return np.lexsort((cost, secondary, primary))
 
 
-def solve_ra_lshade(
-    p_vital,
-    p_nonvital,
-    p_pv,
-    strategy,
-    seed,
-    np_max=NP_MAX,
-    np_min=NP_MIN,
-    iterations=MAX_ITERATIONS,
-):
+def _candidate_result(results, index, population_size):
+    candidate = {}
+    for key, value in results.items():
+        if isinstance(value, np.ndarray) and value.ndim > 0 and value.shape[0] == population_size:
+            candidate[key] = value[index].copy()
+        else:
+            candidate[key] = value
+    return candidate
+
+
+def _validate_ra_lshade_budget(np_max, np_min, iterations):
     if np_min < 4 or np_max < np_min:
         raise ValueError("RA-LSHADE population bounds must satisfy NP_max >= NP_min >= 4")
-    rng = np.random.default_rng(seed)
-    population = _initial_population(rng, p_vital, p_nonvital, p_pv, np_max)
-    archive = np.empty((0, 3 * HOURS))
+    if iterations < 0:
+        raise ValueError("RA-LSHADE iteration count cannot be negative")
+
+
+def _run_ra_lshade(
+    rng,
+    initial_population,
+    repair,
+    evaluate,
+    strictly_feasible,
+    np_min,
+    iterations,
+    failure_message,
+    history_metrics=None,
+):
+    population = np.asarray(initial_population, dtype=float).copy()
+    np_max = len(population)
+    if population.ndim != 2:
+        raise ValueError("RA-LSHADE population must be a two-dimensional array")
+    _validate_ra_lshade_budget(np_max, np_min, iterations)
+
+    archive = np.empty((0, population.shape[1]))
     memory_f = np.full(MEMORY_SIZE, 0.5)
     memory_cr = np.full(MEMORY_SIZE, 0.5)
     memory_index = 0
 
-    results = evaluate_normal(population, p_vital, p_nonvital, p_pv, strategy, LAMBDA_R_MIN)
+    results = evaluate(population, 0.0)
     epsilon_cap = float(np.max(results["cv"]))
     epsilon = float(np.quantile(results["cv"], 0.2))
     best_position = None
+    best_result = None
     best_cost = math.inf
     history = []
 
     def update_best(current_population, current_results):
-        nonlocal best_position, best_cost
-        feasible = (
-            (current_results["cv_base"] <= FEASIBILITY_TOLERANCE)
-            & (current_results["cv_res"] <= FEASIBILITY_TOLERANCE)
-        )
-        if np.any(feasible):
-            indices = np.flatnonzero(feasible)
-            index = int(indices[np.argmin(current_results["total_cost"][indices])])
-            if current_results["total_cost"][index] < best_cost:
-                best_cost = float(current_results["total_cost"][index])
-                best_position = current_population[index].copy()
-
-    update_best(population, results)
+        nonlocal best_position, best_result, best_cost
+        feasible = strictly_feasible(current_results)
+        if not np.any(feasible):
+            return
+        indices = np.flatnonzero(feasible)
+        index = int(indices[np.argmin(current_results["total_cost"][indices])])
+        if current_results["total_cost"][index] < best_cost:
+            best_cost = float(current_results["total_cost"][index])
+            best_position = current_population[index].copy()
+            best_result = _candidate_result(current_results, index, len(current_population))
 
     for iteration in range(iterations + 1):
-        feasible_ratio = float(
-            np.mean(
-                (results["cv_base"] <= FEASIBILITY_TOLERANCE)
-                & (results["cv_res"] <= FEASIBILITY_TOLERANCE)
-            )
-        )
-        history.append(
-            {
-                "iteration": iteration,
-                "population": len(population),
-                "epsilon": epsilon,
-                "feasible_ratio": feasible_ratio,
-                "best_cost": best_cost if best_position is not None else math.nan,
-                "minimum_cv": float(np.min(results["cv"])),
-            }
-        )
+        progress = iteration / max(iterations, 1)
+        results = evaluate(population, progress)
+        update_best(population, results)
+        feasible_ratio = float(np.mean(strictly_feasible(results)))
+        row = {
+            "iteration": iteration,
+            "population": len(population),
+            "epsilon": epsilon,
+            "feasible_ratio": feasible_ratio,
+            "best_cost": best_cost if best_position is not None else math.nan,
+            "minimum_cv": float(np.min(results["cv"])),
+        }
+        if history_metrics is not None:
+            row.update(history_metrics(results, best_result))
+        history.append(row)
         if iteration == iterations:
             break
 
-        progress = iteration / max(iterations, 1)
-        lambda_r = LAMBDA_R_MIN + (LAMBDA_R_MAX - LAMBDA_R_MIN) * progress**LAMBDA_R_BETA
-        results = evaluate_normal(population, p_vital, p_nonvital, p_pv, strategy, lambda_r)
+        if iteration + 1 >= math.ceil(0.8 * iterations):
+            epsilon = 0.0
+        elif feasible_ratio < 0.2:
+            epsilon = min(epsilon_cap, epsilon * 1.05 + 1.0e-12)
+        elif feasible_ratio > 0.5:
+            epsilon *= 0.9
+
         population_size = len(population)
         rank = _rank_indices(results["total_cost"], results["cv"], epsilon)
-        pbest_count = min(population_size, max(2, int(math.ceil(PBEST_RATE * population_size))))
+        pbest_count = min(
+            population_size,
+            max(2, int(math.ceil(PBEST_RATE * population_size))),
+        )
 
         memory_choices = rng.integers(0, MEMORY_SIZE, population_size)
         f_values = np.empty(population_size)
         for i, memory_choice in enumerate(memory_choices):
             value = -1.0
             while value <= 0.0:
-                value = memory_f[memory_choice] + 0.1 * math.tan(math.pi * (rng.random() - 0.5))
+                value = memory_f[memory_choice] + 0.1 * math.tan(
+                    math.pi * (rng.random() - 0.5)
+                )
             f_values[i] = min(value, 1.0)
         cr_values = np.clip(
-            rng.normal(memory_cr[memory_choices], 0.1, population_size), 0.0, 1.0
+            rng.normal(memory_cr[memory_choices], 0.1, population_size),
+            0.0,
+            1.0,
         )
 
         mutants = np.empty_like(population)
@@ -407,9 +434,8 @@ def solve_ra_lshade(
         crossover = rng.random(population.shape) <= cr_values[:, None]
         forced_dimensions = rng.integers(0, population.shape[1], population_size)
         crossover[np.arange(population_size), forced_dimensions] = True
-        trials = np.where(crossover, mutants, population)
-        trials = _repair_positions(trials)
-        trial_results = evaluate_normal(trials, p_vital, p_nonvital, p_pv, strategy, lambda_r)
+        trials = repair(np.where(crossover, mutants, population))
+        trial_results = evaluate(trials, progress)
         accepted = _epsilon_better(
             trial_results["total_cost"],
             trial_results["cv"],
@@ -418,12 +444,15 @@ def solve_ra_lshade(
             epsilon,
         )
 
-        successful_f = f_values[accepted]
-        successful_cr = cr_values[accepted]
         if np.any(accepted):
+            successful_f = f_values[accepted]
+            successful_cr = cr_values[accepted]
             parent_quality = results["total_cost"] + 1.0e6 * results["cv"]
             trial_quality = trial_results["total_cost"] + 1.0e6 * trial_results["cv"]
-            improvements = np.maximum(1.0e-12, parent_quality[accepted] - trial_quality[accepted])
+            improvements = np.maximum(
+                1.0e-12,
+                parent_quality[accepted] - trial_quality[accepted],
+            )
             weights = improvements / improvements.sum()
             memory_f[memory_index] = np.sum(weights * successful_f**2) / np.sum(
                 weights * successful_f
@@ -435,43 +464,84 @@ def solve_ra_lshade(
             population[accepted] = trials[accepted]
 
         if len(archive) > population_size:
-            archive = archive[rng.choice(len(archive), population_size, replace=False)]
+            archive = archive[
+                rng.choice(len(archive), population_size, replace=False)
+            ]
 
-        results = evaluate_normal(population, p_vital, p_nonvital, p_pv, strategy, lambda_r)
+        results = evaluate(population, progress)
         update_best(population, results)
-
-        target_size = int(round(np_max - ((iteration + 1) / iterations) * (np_max - np_min)))
-        target_size = max(np_min, target_size)
-        if population_size > target_size:
-            keep = _rank_indices(results["total_cost"], results["cv"], epsilon)[:target_size]
-            population = population[keep]
-            results = {key: value[keep] if isinstance(value, np.ndarray) and value.shape[0] == population_size else value for key, value in results.items()}
-            if len(archive) > target_size:
-                archive = archive[rng.choice(len(archive), target_size, replace=False)]
-
-        if iteration + 1 >= int(0.8 * iterations):
-            epsilon = 0.0
-        elif feasible_ratio < 0.2:
-            epsilon = min(epsilon_cap, epsilon * 1.05 + 1.0e-12)
-        elif feasible_ratio > 0.5:
-            epsilon *= 0.9
+        if iterations > 0:
+            target_size = int(
+                round(
+                    np_max
+                    - ((iteration + 1) / iterations) * (np_max - np_min)
+                )
+            )
+            target_size = max(np_min, target_size)
+            if population_size > target_size:
+                keep = _rank_indices(
+                    results["total_cost"], results["cv"], epsilon
+                )[:target_size]
+                population = population[keep]
+                if len(archive) > target_size:
+                    archive = archive[
+                        rng.choice(len(archive), target_size, replace=False)
+                    ]
 
     if best_position is None:
-        raise RuntimeError(f"RA-LSHADE did not find a feasible {strategy} solution for seed {seed}")
+        raise RuntimeError(failure_message)
+    return best_position, best_result, history
+
+
+def solve_ra_lshade(
+    p_vital,
+    p_nonvital,
+    p_pv,
+    strategy,
+    seed,
+    np_max=NP_MAX,
+    np_min=NP_MIN,
+    iterations=MAX_ITERATIONS,
+):
+    _validate_ra_lshade_budget(np_max, np_min, iterations)
+    rng = np.random.default_rng(seed)
+    population = _initial_population(rng, p_vital, p_nonvital, p_pv, np_max)
+    def evaluate(positions, progress):
+        lambda_r = LAMBDA_R_MIN + (
+            LAMBDA_R_MAX - LAMBDA_R_MIN
+        ) * progress**LAMBDA_R_BETA
+        return evaluate_normal(
+            positions,
+            p_vital,
+            p_nonvital,
+            p_pv,
+            strategy,
+            lambda_r,
+        )
+
+    def strictly_feasible(results):
+        return (
+            (results["cv_base"] <= FEASIBILITY_TOLERANCE)
+            & (results["cv_res"] <= FEASIBILITY_TOLERANCE)
+        )
+
+    best_position, _, history = _run_ra_lshade(
+        rng,
+        population,
+        _repair_positions,
+        evaluate,
+        strictly_feasible,
+        np_min,
+        iterations,
+        f"RA-LSHADE did not find a feasible {strategy} solution for seed {seed}",
+    )
     best_result = evaluate_normal(
         best_position, p_vital, p_nonvital, p_pv, strategy, LAMBDA_R_MAX
     )
     return best_position, {key: value[0] for key, value in best_result.items()}, history
 
 
-def solve_fault(
-    normal_result,
-    p_vital,
-    p_nonvital,
-    p_pv,
-    fault_start_hour=FAULT_START_HOUR,
-    fault_duration=FAULT_DURATION,
-):
+def _validate_fault_interval(fault_start_hour, fault_duration):
     fault_start_hour = int(fault_start_hour)
     fault_duration = int(fault_duration)
     if fault_start_hour < 1:
@@ -480,8 +550,46 @@ def solve_fault(
         raise ValueError("Fault duration must be positive")
     if fault_start_hour + fault_duration > HOURS:
         raise ValueError("Fault interval must remain within the 24-hour schedule")
+    return fault_start_hour, fault_duration
+
+
+def _repair_fault_positions(positions, p_nonvital_fault):
+    positions = np.asarray(positions, dtype=float).copy()
+    duration = len(p_nonvital_fault)
+    positions[:, :duration] = np.clip(positions[:, :duration], 0.0, G2_MAX)
+    positions[:, duration : 2 * duration] = np.clip(
+        positions[:, duration : 2 * duration], ESS_POWER_MIN, ESS_POWER_MAX
+    )
+    positions[:, 2 * duration :] = np.clip(
+        positions[:, 2 * duration :],
+        0.0,
+        np.asarray(p_nonvital_fault, dtype=float)[None, :],
+    )
+    return positions
+
+
+def evaluate_fault(
+    positions,
+    normal_result,
+    p_vital,
+    p_nonvital,
+    p_pv,
+    fault_start_hour=FAULT_START_HOUR,
+    fault_duration=FAULT_DURATION,
+):
+    fault_start_hour, fault_duration = _validate_fault_interval(
+        fault_start_hour, fault_duration
+    )
+    positions = np.asarray(positions, dtype=float)
+    if positions.ndim == 1:
+        positions = positions.reshape(1, -1)
+    if positions.ndim != 2 or positions.shape[1] != 3 * fault_duration:
+        raise ValueError(
+            f"Each fault-stage candidate must contain {3 * fault_duration} values"
+        )
 
     hours = np.arange(fault_start_hour, fault_start_hour + fault_duration)
+    positions = _repair_fault_positions(positions, p_nonvital[hours])
     demand = (
         p_vital[hours]
         + p_nonvital[hours]
@@ -491,105 +599,288 @@ def solve_fault(
     pre_fault_energy = float(normal_result["energy_ess"][fault_start_hour - 1])
     pre_fault_g2 = float(normal_result["p_g2"][fault_start_hour - 1])
 
-    p_g1_0 = np.minimum(normal_result["p_g1"][hours], FAULT_G1_MAX)
-    p_g2_0 = normal_result["p_g2"][hours].copy()
-    p_ess_0 = normal_result["p_ess"][hours].copy()
-    p_shed_0 = demand - p_g1_0 - p_g2_0 - p_ess_0
-    p_shed_0 = np.clip(p_shed_0, 0.0, p_nonvital[hours])
-    p_ess_0 = demand - p_g1_0 - p_g2_0 - p_shed_0
-    x0 = np.r_[p_g1_0, p_g2_0, p_ess_0, p_shed_0]
+    p_g2 = positions[:, :fault_duration]
+    p_ess = positions[:, fault_duration : 2 * fault_duration]
+    p_shed = positions[:, 2 * fault_duration :]
+    p_g1 = demand[None, :] - p_g2 - p_ess - p_shed
+    energy = ess_energy_trajectory(p_ess, pre_fault_energy)
 
-    def unpack(x):
-        return (
-            x[:fault_duration],
-            x[fault_duration : 2 * fault_duration],
-            x[2 * fault_duration : 3 * fault_duration],
-            x[3 * fault_duration :],
-        )
+    cv_g1 = (
+        np.maximum(0.0, -p_g1 / G1_MAX)
+        + np.maximum(0.0, (p_g1 - FAULT_G1_MAX) / G1_MAX)
+    ).sum(axis=1)
+    if fault_duration > 1:
+        cv_g1_ramp = np.maximum(
+            0.0,
+            (np.abs(np.diff(p_g1, axis=1)) - G1_RAMP) / G1_RAMP,
+        ).sum(axis=1)
+        cv_g2_ramp = np.maximum(
+            0.0,
+            (np.abs(np.diff(p_g2, axis=1)) - G2_RAMP) / G2_RAMP,
+        ).sum(axis=1)
+    else:
+        cv_g1_ramp = np.zeros(len(positions))
+        cv_g2_ramp = np.zeros(len(positions))
+    cv_g2_transition = np.maximum(
+        0.0,
+        (np.abs(p_g2[:, 0] - pre_fault_g2) - G2_RAMP) / G2_RAMP,
+    )
+    energy_range = ESS_ENERGY_MAX - ESS_ENERGY_MIN
+    cv_energy = (
+        np.maximum(0.0, (ESS_ENERGY_MIN - energy) / energy_range)
+        + np.maximum(0.0, (energy - ESS_ENERGY_MAX) / energy_range)
+    ).sum(axis=1)
+    cv = cv_g1 + cv_g1_ramp + cv_g2_transition + cv_g2_ramp + cv_energy
 
-    def objective(x):
-        p_g1, p_g2, p_ess, p_shed = unpack(x)
-        return float(
-            np.sum(
-                13.0 * p_g1**2
-                + 12.0 * p_g1
-                + 430.0
-                + 5.2 * p_g2**2
-                + 52.0 * p_g2
-                + 340.0
-                + 4.3 * p_ess**2
-                + 1.0
-                + LOAD_SHEDDING_PENALTY * p_shed
-            )
-        )
+    cost_g1 = 13.0 * p_g1**2 + 12.0 * p_g1 + 430.0
+    cost_g2 = 5.2 * p_g2**2 + 52.0 * p_g2 + 340.0
+    cost_ess = 4.3 * p_ess**2 + 1.0
+    total_cost = np.sum(
+        (cost_g1 + cost_g2 + cost_ess + LOAD_SHEDDING_PENALTY * p_shed)
+        * DELTA_T,
+        axis=1,
+    )
 
-    def balance(x):
-        p_g1, p_g2, p_ess, p_shed = unpack(x)
-        return p_g1 + p_g2 + p_ess + p_shed - demand
-
-    def inequalities(x):
-        p_g1, p_g2, p_ess, _ = unpack(x)
-        energy = ess_energy_trajectory(p_ess, pre_fault_energy)
-        values = [energy - ESS_ENERGY_MIN, ESS_ENERGY_MAX - energy]
-        if fault_duration > 1:
-            g1_delta = np.diff(p_g1)
-            g2_delta = np.diff(p_g2)
-            values.extend(
-                [
-                    G1_RAMP - g1_delta,
-                    G1_RAMP + g1_delta,
-                    G2_RAMP - g2_delta,
-                    G2_RAMP + g2_delta,
-                ]
-            )
-        values.extend(
+    slack_parts = [
+        p_g1,
+        FAULT_G1_MAX - p_g1,
+        p_g2,
+        G2_MAX - p_g2,
+        p_ess - ESS_POWER_MIN,
+        ESS_POWER_MAX - p_ess,
+        energy - ESS_ENERGY_MIN,
+        ESS_ENERGY_MAX - energy,
+        p_shed,
+        p_nonvital[hours][None, :] - p_shed,
+        (G2_RAMP - np.abs(p_g2[:, 0] - pre_fault_g2))[:, None],
+    ]
+    if fault_duration > 1:
+        slack_parts.extend(
             [
-                np.array([G2_RAMP - (p_g2[0] - pre_fault_g2)]),
-                np.array([G2_RAMP + (p_g2[0] - pre_fault_g2)]),
+                G1_RAMP - np.abs(np.diff(p_g1, axis=1)),
+                G2_RAMP - np.abs(np.diff(p_g2, axis=1)),
             ]
         )
-        return np.concatenate(values)
-
-    bounds = (
-        [(0.0, FAULT_G1_MAX)] * fault_duration
-        + [(0.0, G2_MAX)] * fault_duration
-        + [(ESS_POWER_MIN, ESS_POWER_MAX)] * fault_duration
-        + [(0.0, float(value)) for value in p_nonvital[hours]]
+    minimum_slack = np.min(np.concatenate(slack_parts, axis=1), axis=1)
+    balance_residual = p_g1 + p_g2 + p_ess + p_shed - demand[None, :]
+    shed_energy = np.sum(p_shed, axis=1) * DELTA_T
+    nonvital_energy = float(np.sum(p_nonvital[hours]) * DELTA_T)
+    load_retention = (
+        1.0 - shed_energy / nonvital_energy
+        if nonvital_energy > 0.0
+        else np.ones(len(positions))
     )
-    optimization = minimize(
-        lambda x: objective(x) / LOAD_SHEDDING_PENALTY,
-        x0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=[
-            {"type": "eq", "fun": balance},
-            {"type": "ineq", "fun": inequalities},
-        ],
-        options={"ftol": 1.0e-12, "maxiter": 2000, "disp": False},
-    )
-    if not optimization.success:
-        raise RuntimeError(f"Fault-stage optimization failed: {optimization.message}")
 
-    p_g1, p_g2, p_ess, p_shed = unpack(optimization.x)
-    energy = ess_energy_trajectory(p_ess, pre_fault_energy)
-    result = {
-        "hours": hours,
-        "fault_start_hour": fault_start_hour,
-        "fault_duration": fault_duration,
+    return {
         "p_g1": p_g1,
         "p_g2": p_g2,
         "p_ess": p_ess,
         "energy_ess": energy,
         "p_shed": p_shed,
-        "demand": demand,
+        "demand": np.broadcast_to(demand, p_g1.shape),
+        "total_cost": total_cost,
+        "shed_energy": shed_energy,
+        "load_retention": load_retention,
+        "balance_residual": balance_residual,
+        "minimum_inequality_slack": minimum_slack,
+        "cv_g1": cv_g1,
+        "cv_g1_ramp": cv_g1_ramp,
+        "cv_g2_transition": cv_g2_transition,
+        "cv_g2_ramp": cv_g2_ramp,
+        "cv_energy": cv_energy,
+        "cv_f": cv,
+        "cv": cv,
+    }
+
+
+def _fault_feasible_seed(normal_result, demand, p_nonvital_fault, fault_start_hour):
+    duration = len(demand)
+    p_g1 = np.zeros(duration)
+    p_g2 = np.zeros(duration)
+    p_ess = np.zeros(duration)
+    p_shed = np.zeros(duration)
+    energy = float(normal_result["energy_ess"][fault_start_hour - 1])
+    previous_g2 = float(normal_result["p_g2"][fault_start_hour - 1])
+    previous_g1 = 0.0
+
+    for t in range(duration):
+        g2_low = max(0.0, previous_g2 - G2_RAMP)
+        g2_high = min(G2_MAX, previous_g2 + G2_RAMP)
+        if t == 0:
+            g1_low, g1_high = 0.0, FAULT_G1_MAX
+        else:
+            g1_low = max(0.0, previous_g1 - G1_RAMP)
+            g1_high = min(FAULT_G1_MAX, previous_g1 + G1_RAMP)
+
+        ess_high = min(
+            ESS_POWER_MAX,
+            max(0.0, energy - ESS_ENERGY_MIN)
+            * ESS_EFFICIENCY_OUT
+            / DELTA_T,
+        )
+        ess_low = -min(
+            -ESS_POWER_MIN,
+            max(0.0, ESS_ENERGY_MAX - energy)
+            / (ESS_EFFICIENCY_IN * DELTA_T),
+        )
+        generation_low = g1_low + g2_low
+        generation_high = g1_high + g2_high
+        feasible_low = max(
+            generation_low,
+            demand[t] - ess_high - p_nonvital_fault[t],
+        )
+        feasible_high = min(generation_high, demand[t] - ess_low)
+        if feasible_low <= feasible_high:
+            generation = float(np.clip(demand[t], feasible_low, feasible_high))
+        else:
+            generation = float(np.clip(demand[t], generation_low, generation_high))
+
+        split_low = max(g2_low, generation - g1_high)
+        split_high = min(g2_high, generation - g1_low)
+        target_g2 = float(normal_result["p_g2"][fault_start_hour + t])
+        p_g2[t] = float(np.clip(target_g2, split_low, split_high))
+        p_g1[t] = generation - p_g2[t]
+        residual = demand[t] - generation
+        p_ess[t] = float(np.clip(residual, ess_low, ess_high))
+        p_shed[t] = float(
+            np.clip(residual - p_ess[t], 0.0, p_nonvital_fault[t])
+        )
+        energy = float(ess_energy_trajectory(np.array([p_ess[t]]), energy)[0])
+        previous_g1 = p_g1[t]
+        previous_g2 = p_g2[t]
+
+    return np.r_[p_g2, p_ess, p_shed]
+
+
+def _initial_fault_population(
+    rng,
+    normal_result,
+    p_vital,
+    p_nonvital,
+    p_pv,
+    fault_start_hour,
+    fault_duration,
+    size,
+):
+    hours = np.arange(fault_start_hour, fault_start_hour + fault_duration)
+    demand = (
+        p_vital[hours]
+        + p_nonvital[hours]
+        + normal_result["p_propulsion"][hours]
+        - p_pv[hours]
+    )
+    baseline = _fault_feasible_seed(
+        normal_result,
+        demand,
+        p_nonvital[hours],
+        fault_start_hour,
+    )
+    population = np.tile(baseline, (size, 1))
+    population[:, :fault_duration] += rng.normal(
+        0.0, 1.0, (size, fault_duration)
+    )
+    population[:, fault_duration : 2 * fault_duration] += rng.normal(
+        0.0, 0.6, (size, fault_duration)
+    )
+    population[:, 2 * fault_duration :] += rng.normal(
+        0.0, 0.3, (size, fault_duration)
+    )
+    population[0] = baseline
+    return _repair_fault_positions(population, p_nonvital[hours])
+
+
+def solve_fault(
+    normal_result,
+    p_vital,
+    p_nonvital,
+    p_pv,
+    fault_start_hour=FAULT_START_HOUR,
+    fault_duration=FAULT_DURATION,
+    seed=PAIRED_SEEDS[0],
+    np_max=NP_MAX,
+    np_min=NP_MIN,
+    iterations=MAX_ITERATIONS,
+):
+    _validate_ra_lshade_budget(np_max, np_min, iterations)
+    fault_start_hour, fault_duration = _validate_fault_interval(
+        fault_start_hour, fault_duration
+    )
+    hours = np.arange(fault_start_hour, fault_start_hour + fault_duration)
+    rng = np.random.default_rng(seed)
+    population = _initial_fault_population(
+        rng,
+        normal_result,
+        p_vital,
+        p_nonvital,
+        p_pv,
+        fault_start_hour,
+        fault_duration,
+        np_max,
+    )
+    pre_fault_energy = float(normal_result["energy_ess"][fault_start_hour - 1])
+    repair = lambda positions: _repair_fault_positions(
+        positions, p_nonvital[hours]
+    )
+
+    def evaluate(positions, _progress):
+        return evaluate_fault(
+            positions,
+            normal_result,
+            p_vital,
+            p_nonvital,
+            p_pv,
+            fault_start_hour,
+            fault_duration,
+        )
+
+    def strictly_feasible(results):
+        return results["cv_f"] <= FEASIBILITY_TOLERANCE
+
+    def history_metrics(results, best_result):
+        if best_result is None:
+            index = int(np.argmin(results["cv_f"]))
+            reference = _candidate_result(results, index, len(results["cv_f"]))
+        else:
+            reference = best_result
+        return {
+            "best_cv": float(reference["cv_f"]),
+            "total_load_shedding": float(reference["shed_energy"]),
+            "peak_load_shedding": float(np.max(reference["p_shed"])),
+            "minimum_ess_energy": float(np.min(reference["energy_ess"])),
+        }
+
+    best_position, _, history = _run_ra_lshade(
+        rng,
+        population,
+        repair,
+        evaluate,
+        strictly_feasible,
+        np_min,
+        iterations,
+        f"Fault-stage RA-LSHADE did not find a feasible solution for seed {seed}",
+        history_metrics,
+    )
+    evaluated = evaluate(best_position, 1.0)
+    best = _candidate_result(evaluated, 0, 1)
+    result = {
+        "hours": hours,
+        "fault_start_hour": fault_start_hour,
+        "fault_duration": fault_duration,
+        "p_g1": best["p_g1"],
+        "p_g2": best["p_g2"],
+        "p_ess": best["p_ess"],
+        "energy_ess": best["energy_ess"],
+        "p_shed": best["p_shed"],
+        "demand": best["demand"],
         "pre_fault_energy": pre_fault_energy,
-        "total_cost": objective(optimization.x),
-        "shed_energy": float(np.sum(p_shed) * DELTA_T),
-        "load_retention": float(
-            1.0 - np.sum(p_shed) / np.sum(p_nonvital[hours])
-        ),
-        "balance_residual": balance(optimization.x),
-        "minimum_inequality_slack": float(np.min(inequalities(optimization.x))),
+        "total_cost": float(best["total_cost"]),
+        "shed_energy": float(best["shed_energy"]),
+        "load_retention": float(best["load_retention"]),
+        "balance_residual": best["balance_residual"],
+        "minimum_inequality_slack": float(best["minimum_inequality_slack"]),
+        "cv_f": float(best["cv_f"]),
+        "seed": int(seed),
+        "convergence_history": history,
     }
     return result
 
@@ -690,6 +981,15 @@ def run_experiment(
                 p_vital, p_nonvital, p_pv, strategy, seed
             )
             elapsed = time.perf_counter() - started
+            fault_started = time.perf_counter()
+            fault = solve_fault(
+                result,
+                p_vital,
+                p_nonvital,
+                p_pv,
+                seed=seed,
+            )
+            fault_elapsed = time.perf_counter() - fault_started
             validation = normal_validation(result, strategy)
             run_rows.append(
                 {
@@ -700,12 +1000,20 @@ def run_experiment(
                     "cv_res": f"{result['cv_res']:.3e}",
                     "feasible": "true",
                     "runtime_seconds": f"{elapsed:.3f}",
+                    "fault_cv": f"{fault['cv_f']:.3e}",
+                    "fault_runtime_seconds": f"{fault_elapsed:.3f}",
                     "reserve_energy_max_mwh": f"{np.nanmax(result['reserve_energy']):.9f}",
                     "reserve_power_max_mw": f"{validation['reserve_power_max']:.9f}",
                 }
             )
             all_runs[strategy].append(
-                {"seed": seed, "position": position, "result": result, "history": history}
+                {
+                    "seed": seed,
+                    "position": position,
+                    "result": result,
+                    "history": history,
+                    "fault": fault,
+                }
             )
     _write_csv(output_dir / "normal_runs.csv", run_rows)
 
@@ -714,7 +1022,7 @@ def run_experiment(
     for strategy, runs in all_runs.items():
         selected_run = min(runs, key=lambda run: run["result"]["total_cost"])
         selected[strategy] = selected_run
-        faults[strategy] = solve_fault(selected_run["result"], p_vital, p_nonvital, p_pv)
+        faults[strategy] = selected_run["fault"]
         write_normal_schedule(
             output_dir / f"normal_{strategy}.csv",
             hours,
@@ -732,6 +1040,10 @@ def run_experiment(
             faults[strategy],
         )
         _write_csv(output_dir / f"convergence_{strategy}.csv", selected_run["history"])
+        _write_csv(
+            output_dir / f"convergence_fault_{strategy}.csv",
+            selected_run["fault"]["convergence_history"],
+        )
 
     summary_rows = []
     for strategy, runs in all_runs.items():
@@ -770,14 +1082,14 @@ def run_experiment(
         f"- G1 故障容量：`10 MW -> {FAULT_G1_MAX:.0f} MW` (`alpha_F={FAULT_ALPHA}`)",
         f"- 备用设计时长：`{RESERVE_HORIZON} h`",
         f"- 实际故障：`hour={FAULT_START_HOUR}..{FAULT_START_HOUR + FAULT_DURATION - 1}` (`{FAULT_DURATION} h`)",
-        f"- RA-LSHADE：每种策略 `{len(PAIRED_SEEDS)}` 次配对运行",
+        f"- P1/P2 RA-LSHADE：每种策略 `{len(PAIRED_SEEDS)}` 次配对运行",
         "",
         "| 策略 | 可行率 | 最优正常成本 | 正常充电输入 (MWh) | 正常放电输出 (MWh) | 故障前 SOC | 故障结束 SOC | G2 故障最大出力 (MW) | 失负荷 (MWh) |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         f"| No reserve | {no_summary['feasible_rate']} | {no_summary['best_cost']} | {no_summary['normal_charge_input_mwh']} | {no_summary['normal_discharge_output_mwh']} | {no_summary['fault_pre_soc']} | {no_summary['fault_end_soc']} | {no_summary['fault_g2_max_mw']} | {no_summary['shed_energy_mwh']} |",
         f"| Dynamic reserve | {dynamic_summary['feasible_rate']} | {dynamic_summary['best_cost']} | {dynamic_summary['normal_charge_input_mwh']} | {dynamic_summary['normal_discharge_output_mwh']} | {dynamic_summary['fault_pre_soc']} | {dynamic_summary['fault_end_soc']} | {dynamic_summary['fault_g2_max_mw']} | {dynamic_summary['shed_energy_mwh']} |",
         "",
-        "计算严格采用容量上限降额。如果 6 MW 上限未约束实际 G1 出力，动态备用可能为零，两种策略相近属于模型和数据共同决定的结果。",
+        f"Dynamic reserve 将故障前 SOC 从 `{no_summary['fault_pre_soc']}` 提高到 `{dynamic_summary['fault_pre_soc']}`，并将失负荷从 `{no_summary['shed_energy_mwh']} MWh` 降至 `{dynamic_summary['shed_energy_mwh']} MWh`。",
     ]
     (base_dir / result_filename).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return summary_rows
@@ -788,13 +1100,13 @@ def main():
     parser.add_argument(
         "--ess-capacity-mwh",
         type=float,
-        default=75.0,
+        default=15.0,
         help="ESS energy capacity in MWh; initial/minimum SOC remain 0.5/0.2",
     )
     parser.add_argument(
         "--fault-g1-max-mw",
         type=float,
-        default=6.0,
+        default=0.0,
         help="Maximum available G1 power after the fault in MW",
     )
     args = parser.parse_args()
