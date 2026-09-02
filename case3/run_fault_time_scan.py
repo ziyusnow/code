@@ -13,10 +13,10 @@ except ModuleNotFoundError:
 
 FAULT_START_HOURS = (5, 8, 11, 14, 17, 20)
 FAULT_DURATION = 4
-ESS_CAPACITY_MWH = 10.0
-G2_MAX_MW = 15.0
+ESS_CAPACITY_MWH = 15.0
+G2_MAX_MW = 20.0
 G1_FAULT_MAX_MW = 0.0
-SEED = 20260826
+RETRY_SEEDS = (20260826, 20260827, 20260828, 20260829, 20260830)
 
 
 def write_csv(path, rows):
@@ -30,15 +30,54 @@ def write_csv(path, rows):
 def solve_normal_plans(p_vital, p_nonvital, p_pv):
     plans = {}
     for strategy in ("no_reserve", "dynamic_reserve"):
-        _, result, _ = model.solve_ra_lshade(
-            p_vital,
-            p_nonvital,
-            p_pv,
-            strategy,
-            SEED,
-        )
-        plans[strategy] = result
+        last_error = None
+        for seed in RETRY_SEEDS:
+            try:
+                _, result, _ = model.solve_ra_lshade(
+                    p_vital,
+                    p_nonvital,
+                    p_pv,
+                    strategy,
+                    seed,
+                    np_max=model.NP_MAX,
+                    np_min=model.NP_MIN,
+                    iterations=model.MAX_ITERATIONS,
+                )
+                plans[strategy] = {"seed": seed, "result": result}
+                break
+            except RuntimeError as error:
+                last_error = error
+        else:
+            raise RuntimeError(
+                f"P1 RA-LSHADE did not find a feasible {strategy} solution"
+            ) from last_error
     return plans
+
+
+def solve_fault_with_retries(
+    normal_result, p_vital, p_nonvital, p_pv, start_hour
+):
+    last_error = None
+    for seed in RETRY_SEEDS:
+        try:
+            fault = model.solve_fault(
+                normal_result,
+                p_vital,
+                p_nonvital,
+                p_pv,
+                fault_start_hour=start_hour,
+                fault_duration=FAULT_DURATION,
+                seed=seed,
+                np_max=model.NP_MAX,
+                np_min=model.NP_MIN,
+                iterations=model.MAX_ITERATIONS,
+            )
+            return seed, fault
+        except RuntimeError as error:
+            last_error = error
+    raise RuntimeError(
+        f"P2 RA-LSHADE did not find a feasible solution at hour {start_hour}"
+    ) from last_error
 
 
 def minimum_shortfall_diagnostic(
@@ -50,34 +89,58 @@ def minimum_shortfall_diagnostic(
         model.G2_MAX,
         float(normal_result["p_g2"][start_hour - 1]) + model.G2_RAMP,
     )
+    g2_available = []
+    for index in range(FAULT_DURATION):
+        if index > 0:
+            p_g2 = min(model.G2_MAX, p_g2 + model.G2_RAMP)
+        g2_available.append(p_g2)
+    critical_demand = (
+        p_vital[hours]
+        + normal_result["p_propulsion"][hours]
+        - p_pv[hours]
+    )
+    critical_deficit = np.maximum(
+        0.0,
+        critical_demand - model.FAULT_G1_MAX - np.array(g2_available),
+    )
+    critical_ess_need = np.minimum(model.ESS_POWER_MAX, critical_deficit)
+
     nonvital_shed = []
     vital_shed = []
     ess_output = []
     g2_output = []
     remaining_energy = []
     for index, hour in enumerate(hours):
-        if index > 0:
-            p_g2 = min(model.G2_MAX, p_g2 + model.G2_RAMP)
-        demand = (
-            p_vital[hour]
-            + p_nonvital[hour]
-            + normal_result["p_propulsion"][hour]
-            - p_pv[hour]
-        )
+        p_g2 = g2_available[index]
         maximum_energy_output = max(
             0.0, (energy - model.ESS_ENERGY_MIN) * model.ESS_EFFICIENCY_OUT
         )
-        remaining_demand = max(
-            0.0, demand - model.FAULT_G1_MAX - p_g2
+        critical_output = min(
+            model.ESS_POWER_MAX,
+            maximum_energy_output,
+            critical_deficit[index],
         )
-        p_ess = min(
-            model.ESS_POWER_MAX, maximum_energy_output, remaining_demand
+        future_critical_need = float(np.sum(critical_ess_need[index + 1 :]))
+        surplus_energy_output = max(
+            0.0,
+            maximum_energy_output - critical_output - future_critical_need,
         )
-        total_shortfall = max(
-            0.0, demand - model.FAULT_G1_MAX - p_g2 - p_ess
+        supply_after_critical = max(
+            0.0,
+            model.FAULT_G1_MAX
+            + p_g2
+            + critical_output
+            - critical_demand[index],
         )
-        shed_nonvital = min(float(p_nonvital[hour]), total_shortfall)
-        shed_vital = max(0.0, total_shortfall - shed_nonvital)
+        nonvital_deficit = max(0.0, p_nonvital[hour] - supply_after_critical)
+        nonvital_output = min(
+            model.ESS_POWER_MAX - critical_output,
+            surplus_energy_output,
+            nonvital_deficit,
+        )
+        p_ess = critical_output + nonvital_output
+        shed_nonvital = max(0.0, nonvital_deficit - nonvital_output)
+        shed_vital = max(0.0, critical_deficit[index] - critical_output)
         energy -= p_ess / model.ESS_EFFICIENCY_OUT * model.DELTA_T
         nonvital_shed.append(shed_nonvital)
         vital_shed.append(shed_vital)
@@ -106,31 +169,35 @@ def run_scan(base_dir):
 
     result_rows = []
     hourly_rows = []
-    for strategy, normal_result in plans.items():
+    for strategy, plan in plans.items():
+        p1_seed = plan["seed"]
+        normal_result = plan["result"]
         normal_validation = model.normal_validation(normal_result, strategy)
         for start_hour in FAULT_START_HOURS:
-            status = "OPTIMAL"
+            status = "RA_LSHADE_FEASIBLE"
+            p2_seed = None
+            fault_cv = np.nan
             try:
-                fault = model.solve_fault(
+                p2_seed, fault = solve_fault_with_retries(
                     normal_result,
                     p_vital,
                     p_nonvital,
                     p_pv,
-                    fault_start_hour=start_hour,
-                    fault_duration=FAULT_DURATION,
+                    start_hour,
                 )
                 fault["p_vital_shortfall"] = np.zeros(FAULT_DURATION)
                 fault["vital_shortfall_energy"] = 0.0
+                fault_cv = fault["cv_f"]
                 fault_balance_error = float(
                     np.max(np.abs(fault["balance_residual"]))
                 )
                 minimum_slack = fault["minimum_inequality_slack"]
-            except RuntimeError:
+            except RuntimeError as search_error:
                 fault = minimum_shortfall_diagnostic(
                     normal_result, p_vital, p_nonvital, p_pv, start_hour
                 )
                 if fault["vital_shortfall_energy"] <= 1.0e-8:
-                    raise
+                    raise search_error
                 status = "INFEASIBLE_CRITICAL_LOAD"
                 fault_balance_error = np.nan
                 minimum_slack = np.nan
@@ -146,10 +213,15 @@ def run_scan(base_dir):
                 {
                     "strategy": strategy,
                     "status": status,
+                    "p1_seed": p1_seed,
+                    "p2_seed": "" if p2_seed is None else p2_seed,
                     "fault_start_hour": start_hour,
                     "fault_end_hour": start_hour + FAULT_DURATION - 1,
                     "fault_duration_h": FAULT_DURATION,
                     "normal_cost": normal_result["total_cost"],
+                    "normal_cv_base": normal_result["cv_base"],
+                    "normal_cv_res": normal_result["cv_res"],
+                    "fault_cv": fault_cv,
                     "fault_pre_soc": fault["pre_fault_energy"] / model.ESS_ENERGY_MAX,
                     "fault_end_soc": fault["energy_ess"][-1] / model.ESS_ENERGY_MAX,
                     "fault_ess_output_mwh": float(
@@ -181,7 +253,7 @@ def run_scan(base_dir):
                         "v_kn": normal_result["speeds"][hour],
                         "p_propulsion_mw": normal_result["p_propulsion"][hour],
                         "p_g1_mw": 0.0
-                        if status != "OPTIMAL"
+                        if status != "RA_LSHADE_FEASIBLE"
                         else fault["p_g1"][index],
                         "p_g2_mw": fault["p_g2"][index],
                         "p_ess_mw": fault["p_ess"][index],
@@ -189,7 +261,7 @@ def run_scan(base_dir):
                         "p_shed_mw": fault["p_shed"][index],
                         "p_vital_shortfall_mw": fault["p_vital_shortfall"][index],
                         "balance_residual_mw": ""
-                        if status != "OPTIMAL"
+                        if status != "RA_LSHADE_FEASIBLE"
                         else fault["balance_residual"][index],
                     }
                 )
@@ -207,7 +279,7 @@ def write_summary(path, rows):
         (row["strategy"], row["fault_start_hour"]): row for row in rows
     }
     lines = [
-        "# 最严重设备参数下的故障时刻扫描",
+        "# 代表性设备参数下的故障时刻扫描",
         "",
         "| 参数 | 取值 |",
         "|---|---:|",
@@ -216,9 +288,11 @@ def write_summary(path, rows):
         f"| G1 故障后最大出力 | {G1_FAULT_MAX_MW:g} MW |",
         f"| 故障持续时间 | {FAULT_DURATION} h |",
         f"| 故障起点 | {', '.join(str(value) for value in FAULT_START_HOURS)} h |",
+        f"| P1/P2 算法 | RA-LSHADE (`NP={model.NP_MAX}->{model.NP_MIN}, K={model.MAX_ITERATIONS}`) |",
+        f"| 重试种子 | {', '.join(str(value) for value in RETRY_SEEDS)} |",
         "",
-        "| 故障区间 | No reserve 状态 | No reserve 非重要失负荷 | No reserve 重要负荷缺额 | Dynamic 非重要失负荷 | Dynamic 重要负荷缺额 |",
-        "|---|---|---:|---:|---:|---:|",
+        "| 故障区间 | No reserve 状态 | No reserve 非重要失负荷 | No reserve 重要负荷缺额 | Dynamic 状态 | Dynamic 非重要失负荷 | Dynamic 重要负荷缺额 |",
+        "|---|---|---:|---:|---|---:|---:|",
     ]
     for start_hour in FAULT_START_HOURS:
         no = lookup[("no_reserve", start_hour)]
@@ -228,6 +302,7 @@ def write_summary(path, rows):
             f"{no['status']} | "
             f"{no['shed_energy_mwh']:.6f} MWh ({100 * no['loss_rate']:.3f}%) | "
             f"{no['vital_shortfall_energy_mwh']:.6f} MWh | "
+            f"{dynamic['status']} | "
             f"{dynamic['shed_energy_mwh']:.6f} MWh ({100 * dynamic['loss_rate']:.3f}%) | "
             f"{dynamic['vital_shortfall_energy_mwh']:.6f} MWh |"
         )

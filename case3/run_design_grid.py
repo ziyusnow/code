@@ -21,7 +21,14 @@ RETRY_SEEDS = (20260826, 20260827, 20260828, 20260829, 20260830)
 
 
 def _strategy_row(
-    ess_capacity, g2_capacity, g1_fault_limit, strategy, seed, result, fault
+    ess_capacity,
+    g2_capacity,
+    g1_fault_limit,
+    strategy,
+    p1_seed,
+    p2_seed,
+    result,
+    fault,
 ):
     return {
         "ess_capacity_mwh": ess_capacity,
@@ -30,10 +37,12 @@ def _strategy_row(
         "g2_ramp_mw_per_h": model.G2_RAMP,
         "g1_fault_max_mw": g1_fault_limit,
         "strategy": strategy,
-        "seed": seed,
+        "p1_seed": p1_seed,
+        "p2_seed": p2_seed,
         "normal_cost": float(result["total_cost"]),
         "normal_cv_base": float(result["cv_base"]),
         "normal_cv_res": float(result["cv_res"]),
+        "fault_cv": float(fault["cv_f"]),
         "reserve_energy_max_mwh": float(np.nanmax(result["reserve_energy"])),
         "reserve_power_max_mw": float(np.nanmax(result["reserve_power_max"])),
         "fault_pre_soc": float(fault["pre_fault_energy"] / model.ESS_ENERGY_MAX),
@@ -45,6 +54,52 @@ def _strategy_row(
     }
 
 
+def _solve_normal_with_retries(
+    p_vital, p_nonvital, p_pv, strategy, np_max, np_min, iterations
+):
+    last_error = None
+    for seed in RETRY_SEEDS:
+        try:
+            position, result, _ = model.solve_ra_lshade(
+                p_vital,
+                p_nonvital,
+                p_pv,
+                strategy,
+                seed,
+                np_max=np_max,
+                np_min=np_min,
+                iterations=iterations,
+            )
+            return seed, position, result
+        except RuntimeError as error:
+            last_error = error
+    raise RuntimeError(
+        f"P1 RA-LSHADE did not find a feasible {strategy} solution"
+    ) from last_error
+
+
+def _solve_fault_with_retries(
+    normal_result, p_vital, p_nonvital, p_pv, np_max, np_min, iterations
+):
+    last_error = None
+    for seed in RETRY_SEEDS:
+        try:
+            fault = model.solve_fault(
+                normal_result,
+                p_vital,
+                p_nonvital,
+                p_pv,
+                seed=seed,
+                np_max=np_max,
+                np_min=np_min,
+                iterations=iterations,
+            )
+            return seed, fault
+        except RuntimeError as error:
+            last_error = error
+    raise RuntimeError("P2 RA-LSHADE did not find a feasible solution") from last_error
+
+
 def solve_design_point(args):
     ess_capacity, g2_capacity, np_max, np_min, iterations = args
     model.configure_ess_capacity(ess_capacity)
@@ -53,15 +108,14 @@ def solve_design_point(args):
     _, p_vital, p_nonvital, p_pv = model.load_input_data(root / "data.md")
 
     model.configure_fault_g1_max(G1_FAULT_LIMITS[0])
-    no_position, _, _ = model.solve_ra_lshade(
+    no_p1_seed, no_position, _ = _solve_normal_with_retries(
         p_vital,
         p_nonvital,
         p_pv,
         "no_reserve",
-        BATCH_SEED,
-        np_max=np_max,
-        np_min=np_min,
-        iterations=iterations,
+        np_max,
+        np_min,
+        iterations,
     )
 
     rows = []
@@ -71,48 +125,54 @@ def solve_design_point(args):
             no_position, p_vital, p_nonvital, p_pv, "no_reserve", model.LAMBDA_R_MAX
         )
         no_result = {key: value[0] for key, value in no_result_batch.items()}
-        no_fault = model.solve_fault(no_result, p_vital, p_nonvital, p_pv)
+        no_p2_seed, no_fault = _solve_fault_with_retries(
+            no_result,
+            p_vital,
+            p_nonvital,
+            p_pv,
+            np_max,
+            np_min,
+            iterations,
+        )
         rows.append(
             _strategy_row(
                 ess_capacity,
                 g2_capacity,
                 fault_limit,
                 "no_reserve",
-                BATCH_SEED,
+                no_p1_seed,
+                no_p2_seed,
                 no_result,
                 no_fault,
             )
         )
 
-        last_error = None
-        for dynamic_seed in RETRY_SEEDS:
-            try:
-                _, dynamic_result, _ = model.solve_ra_lshade(
-                    p_vital,
-                    p_nonvital,
-                    p_pv,
-                    "dynamic_reserve",
-                    dynamic_seed,
-                    np_max=np_max,
-                    np_min=np_min,
-                    iterations=iterations,
-                )
-                break
-            except RuntimeError as error:
-                last_error = error
-        else:
-            raise RuntimeError(
-                f"No feasible dynamic-reserve solution for ESS={ess_capacity:g} MWh, "
-                f"G2={g2_capacity:g} MW, G1 fault max={fault_limit:g} MW"
-            ) from last_error
-        dynamic_fault = model.solve_fault(dynamic_result, p_vital, p_nonvital, p_pv)
+        dynamic_p1_seed, _, dynamic_result = _solve_normal_with_retries(
+            p_vital,
+            p_nonvital,
+            p_pv,
+            "dynamic_reserve",
+            np_max,
+            np_min,
+            iterations,
+        )
+        dynamic_p2_seed, dynamic_fault = _solve_fault_with_retries(
+            dynamic_result,
+            p_vital,
+            p_nonvital,
+            p_pv,
+            np_max,
+            np_min,
+            iterations,
+        )
         rows.append(
             _strategy_row(
                 ess_capacity,
                 g2_capacity,
                 fault_limit,
                 "dynamic_reserve",
-                dynamic_seed,
+                dynamic_p1_seed,
+                dynamic_p2_seed,
                 dynamic_result,
                 dynamic_fault,
             )
@@ -125,17 +185,6 @@ def _write_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-
-
-def _read_csv(path):
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    numeric_fields = set(rows[0]) - {"strategy"}
-    for row in rows:
-        for field in numeric_fields:
-            row[field] = float(row[field])
-        row["seed"] = int(row["seed"])
-    return rows
 
 
 def comparison_rows(strategy_rows):
@@ -213,11 +262,15 @@ def write_summary(path, comparisons, strategy_rows, np_max, np_min, iterations):
         if row["dynamic_reserve_shed_mwh"] <= 1.0e-7
         and row["no_reserve_shed_mwh"] > 1.0e-7
     ]
-    retried = [row for row in strategy_rows if row["seed"] != BATCH_SEED]
+    p1_retried = [row for row in strategy_rows if row["p1_seed"] != BATCH_SEED]
+    p2_retried = [row for row in strategy_rows if row["p2_seed"] != BATCH_SEED]
     complete_fault_rows = [
         row for row in comparisons if row["g1_fault_max_mw"] == 0.0
     ]
     complete_fault_shed = [row["no_reserve_shed_mwh"] for row in complete_fault_rows]
+    complete_fault_dynamic_shed = [
+        row["dynamic_reserve_shed_mwh"] for row in complete_fault_rows
+    ]
     complete_fault_cost = [row["cost_increase_pct"] for row in complete_fault_rows]
     lines = [
         "# Case 3 设备设计参数批量计算",
@@ -228,9 +281,9 @@ def write_summary(path, comparisons, strategy_rows, np_max, np_min, iterations):
         "| G2 | 最大出力 `15、16、17、18、19、20 MW` | 爬坡 `3 MW/h` |",
         "| G1 故障 | 最大可用出力 `6、2、0 MW` | 正常额定上限 `10 MW` |",
         "",
-        f"- RA-LSHADE 预算为 `NP={np_max}->{np_min}, K={iterations}`，首选种子 `{BATCH_SEED}`；若未找到可行解，按固定种子序列重试。共 `{len(retried)}` 条 Dynamic reserve 结果使用了后续种子。",
+        f"- P1/P2 均采用 RA-LSHADE，预算为 `NP={np_max}->{np_min}, K={iterations}`；首选种子 `{BATCH_SEED}`，失败后按固定种子序列重试。P1/P2 分别有 `{len(p1_retried)}/{len(p2_retried)}` 条结果使用后续种子。",
         f"- Dynamic reserve 降低失负荷的组合：`{len(improved)}/{len(comparisons)}`；完全消除原有失负荷的组合：`{len(eliminated)}/{len(comparisons)}`。",
-        f"- 差异全部出现在 G1 完全停机场景：No reserve 失负荷 `{min(complete_fault_shed):.3f}–{max(complete_fault_shed):.3f} MWh`，Dynamic reserve 均为 `0 MWh`，正常成本增加 `{min(complete_fault_cost):.3f}%–{max(complete_fault_cost):.3f}%`。",
+        f"- G1 完全停机场景中，No reserve 失负荷为 `{min(complete_fault_shed):.3f}–{max(complete_fault_shed):.3f} MWh`，Dynamic reserve 为 `{min(complete_fault_dynamic_shed):.3f}–{max(complete_fault_dynamic_shed):.3f} MWh`，正常成本变化为 `{min(complete_fault_cost):.3f}%–{max(complete_fault_cost):.3f}%`。",
         "- 本表用于设备参数筛选；单种子元启发式结果可能有局部非单调波动，正式统计结论仍需对选定代表性组合进行多种子稳定性实验。",
         "",
     ]
@@ -276,11 +329,8 @@ def main():
             progress_path = progress_dir / (
                 f"ess{ess_capacity:g}_g2{g2_capacity:g}.csv"
             )
-            if progress_path.exists():
-                point_rows = _read_csv(progress_path)
-            else:
-                point_rows = solve_design_point(job)
-                _write_csv(progress_path, point_rows)
+            point_rows = solve_design_point(job)
+            _write_csv(progress_path, point_rows)
             strategy_rows.extend(point_rows)
             print(
                 f"completed {completed}/{len(jobs)}: "
@@ -291,8 +341,13 @@ def main():
         with ProcessPoolExecutor(max_workers=args.workers) as executor:
             futures = {executor.submit(solve_design_point, job): job[:2] for job in jobs}
             for completed, future in enumerate(as_completed(futures), start=1):
-                strategy_rows.extend(future.result())
                 ess_capacity, g2_capacity = futures[future]
+                point_rows = future.result()
+                progress_path = progress_dir / (
+                    f"ess{ess_capacity:g}_g2{g2_capacity:g}.csv"
+                )
+                _write_csv(progress_path, point_rows)
+                strategy_rows.extend(point_rows)
                 print(
                     f"completed {completed}/{len(jobs)}: "
                     f"ESS={ess_capacity:g} MWh, G2={g2_capacity:g} MW",

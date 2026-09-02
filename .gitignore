@@ -8,3 +8,8 @@ __pycache__/
 
 checkpoints/
 case3_online_rework_backup_20260831/
+
+# Reproducible Case 3 sensitivity-analysis data
+case3/design_grid/progress/
+case3/design_grid/strategy_*.csv
+case3/fault_time_scan/*.csv
